@@ -15,7 +15,7 @@ AI-powered video subtitle creation app that automatically transcribes videos and
 
 ```bash
 # Build and run
-docker-compose up --build
+docker compose up --build
 
 # Access the app
 open http://localhost:3000
