@@ -1,0 +1,6 @@
+pyproject.toml
+subtitle_creator_backend.egg-info/PKG-INFO
+subtitle_creator_backend.egg-info/SOURCES.txt
+subtitle_creator_backend.egg-info/dependency_links.txt
+subtitle_creator_backend.egg-info/requires.txt
+subtitle_creator_backend.egg-info/top_level.txt

@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: subtitle-creator-backend
+Version: 1.0.0
+Summary: Video subtitle creation backend with Whisper AI
+Requires-Python: >=3.10
+Requires-Dist: fastapi>=0.109.0
+Requires-Dist: uvicorn[standard]>=0.27.0
+Requires-Dist: python-multipart>=0.0.6
+Requires-Dist: pysubs2>=1.6.1
+Requires-Dist: ffmpeg-python>=0.2.0
+Requires-Dist: torch>=2.0.0
+Requires-Dist: torchaudio>=2.0.0
+Requires-Dist: openai-whisper>=20231117
