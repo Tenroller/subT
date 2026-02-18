@@ -1,4 +1,4 @@
-# Video Subtitle Creator
+# SubT
 
 AI-powered video subtitle creation app that automatically transcribes videos and burns stylized subtitles.
 

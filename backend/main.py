@@ -17,8 +17,9 @@ from pydantic import BaseModel
 
 # Local imports
 from transcriber import Transcriber
-from subtitle_generator import SubtitleGenerator, SubtitleStyle, DisplayMode, Position
+from subtitle_generator import SubtitleGenerator, SubtitleStyle, DisplayMode, Position, generate_srt
 from video_processor import VideoProcessor
+from translator import get_translator
 
 # Configuration
 UPLOAD_DIR = Path("uploads")
@@ -62,6 +63,7 @@ class JobStatus(str, Enum):
     PENDING = "pending"
     QUEUED = "queued"
     TRANSCRIBING = "transcribing"
+    TRANSLATING = "translating"
     GENERATING_SUBTITLES = "generating_subtitles"
     PROCESSING_VIDEO = "processing_video"
     COMPLETED = "completed"
@@ -74,6 +76,7 @@ class Job(BaseModel):
     progress: int = 0
     error: Optional[str] = None
     output_file: Optional[str] = None
+    srt_file: Optional[str] = None
     queue_position: Optional[int] = None
 
 
@@ -173,7 +176,10 @@ async def upload_video(
     video: UploadFile = File(...),
     style: str = Form("yellow_highlight"),
     display_mode: str = Form("word"),
-    position: str = Form("bottom")
+    position: str = Form("bottom"),
+    text_color: str = Form(None),  # Hex color like #FFFFFF
+    highlight_color: str = Form(None),  # Hex color like #FFD700
+    target_language: str = Form(None)  # Language code like "es", "fr", etc.
 ):
     """
     Upload a video and start subtitle generation
@@ -182,6 +188,9 @@ async def upload_video(
     - **style**: yellow_highlight, multicolor_pop, or clean_outline
     - **display_mode**: word (word-by-word) or sentence
     - **position**: top, center, or bottom
+    - **text_color**: Custom text color in hex format (e.g., #FFFFFF)
+    - **highlight_color**: Custom highlight color in hex format (e.g., #FFD700)
+    - **target_language**: Target language code for translation (e.g., "es", "fr")
     """
     # Validate file extension
     file_ext = Path(video.filename).suffix.lower()
@@ -235,7 +244,10 @@ async def upload_video(
         str(input_path),
         subtitle_style,
         subtitle_display_mode,
-        subtitle_position
+        subtitle_position,
+        text_color,
+        highlight_color,
+        target_language
     )
     
     return {"job_id": job_id, "status": job.status}
@@ -246,12 +258,16 @@ async def process_video_task(
     input_path: str,
     style: SubtitleStyle,
     display_mode: DisplayMode,
-    position: Position
+    position: Position,
+    text_color: Optional[str] = None,
+    highlight_color: Optional[str] = None,
+    target_language: Optional[str] = None
 ):
     """Background task to process video with subtitles"""
     job = jobs[job_id]
     output_path = OUTPUT_DIR / f"{job_id}_subtitled.mp4"
     subtitle_path = OUTPUT_DIR / f"{job_id}.ass"
+    srt_path = OUTPUT_DIR / f"{job_id}.srt"
     
     try:
         # Acquire semaphore to limit concurrency
@@ -261,29 +277,52 @@ async def process_video_task(
             job.progress = 10
             
             async with transcription_lock:
-                segments = await asyncio.to_thread(
-                    transcriber.transcribe,
+                segments, detected_language = await asyncio.to_thread(
+                    transcriber.transcribe_with_language,
                     input_path
                 )
             
-            job.progress = 40
+            job.progress = 30
             
-            # Step 2: Generate subtitles
+            # Step 2: Translate if needed
+            if target_language and target_language != detected_language:
+                job.status = JobStatus.TRANSLATING
+                job.progress = 35
+                
+                translator = get_translator()
+                segments = await asyncio.to_thread(
+                    translator.translate_segments,
+                    segments,
+                    detected_language,
+                    target_language
+                )
+                
+                job.progress = 50
+            else:
+                job.progress = 50
+            
+            # Step 3: Generate SRT file (plain text subtitles)
+            generate_srt(segments, str(srt_path))
+            job.srt_file = str(srt_path)
+            
+            # Step 4: Generate styled ASS subtitles
             job.status = JobStatus.GENERATING_SUBTITLES
             
             generator = SubtitleGenerator(
                 style=style,
                 display_mode=display_mode,
-                position=position
+                position=position,
+                text_color=text_color,
+                highlight_color=highlight_color
             )
             
             # Get video dimensions for proper positioning
             width, height = video_processor.get_dimensions(input_path)
             generator.generate(segments, str(subtitle_path), width, height)
             
-            job.progress = 60
+            job.progress = 70
             
-            # Step 3: Burn subtitles into video
+            # Step 5: Burn subtitles into video
             job.status = JobStatus.PROCESSING_VIDEO
             
             await asyncio.to_thread(
@@ -365,6 +404,44 @@ async def get_styles():
     }
 
 
+@app.get("/download-srt/{job_id}")
+async def download_srt(job_id: str, background_tasks: BackgroundTasks):
+    """Download the SRT subtitle file for the given job"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video not ready. Current status: {job.status}"
+        )
+    
+    if not job.srt_file or not os.path.exists(job.srt_file):
+        raise HTTPException(status_code=404, detail="SRT file not found")
+    
+    # Schedule cleanup for 5 minutes after download
+    background_tasks.add_task(cleanup_file_after_delay, job.srt_file, 300)
+    
+    return FileResponse(
+        job.srt_file,
+        media_type="text/plain",
+        filename=f"subtitles_{job_id}.srt"
+    )
+
+
+@app.get("/languages")
+async def get_languages():
+    """Get available languages for translation"""
+    translator = get_translator()
+    languages = translator.get_available_languages()
+    return {
+        "languages": languages,
+        "note": "Language packages are downloaded on first use. This may take a moment."
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=4569)

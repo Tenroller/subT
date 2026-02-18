@@ -18,8 +18,12 @@ if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
     uv venv
 fi
-source .venv/bin/activate
-uvicorn main:app --reload --host 0.0.0.0 --port 8000 &
+# Install dependencies using uv
+echo "Installing dependencies..."
+uv sync
+# Install pip for uvicorn reload functionality
+uv pip install pip
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 4569 &
 BACKEND_PID=$!
 
 # Start the Frontend
@@ -29,7 +33,7 @@ npm run dev &
 FRONTEND_PID=$!
 
 echo "✅ Both services are starting..."
-echo "Backend: http://localhost:8000"
+echo "Backend: http://localhost:4569"
 echo "Frontend: Check output above for port (usually http://localhost:5173)"
 echo "Press Ctrl+C to stop both."
 

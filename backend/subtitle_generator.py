@@ -132,6 +132,33 @@ def parse_ass_color(color_str: str) -> pysubs2.Color:
         return pysubs2.Color(255, 255, 255)
 
 
+def hex_to_ass_color(hex_color: str) -> str:
+    """
+    Convert hex color (#RRGGBB or #RGB) to ASS color format (&HAABBGGRR)
+    """
+    if not hex_color:
+        return None
+    
+    # Remove # prefix
+    hex_color = hex_color.lstrip('#')
+    
+    # Expand shorthand (#RGB -> #RRGGBB)
+    if len(hex_color) == 3:
+        hex_color = ''.join([c*2 for c in hex_color])
+    
+    if len(hex_color) != 6:
+        return None
+    
+    try:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        # ASS format is &HAABBGGRR (with alpha=00 for opaque)
+        return f"&H00{b:02X}{g:02X}{r:02X}"
+    except ValueError:
+        return None
+
+
 class SubtitleGenerator:
     """Generate styled ASS subtitles from transcription"""
     
@@ -139,12 +166,32 @@ class SubtitleGenerator:
         self,
         style: SubtitleStyle = SubtitleStyle.YELLOW_HIGHLIGHT,
         display_mode: DisplayMode = DisplayMode.WORD,
-        position: Position = Position.BOTTOM
+        position: Position = Position.BOTTOM,
+        text_color: str = None,  # Hex color like #FFFFFF
+        highlight_color: str = None  # Hex color like #FFD700
     ):
         self.style = style
         self.display_mode = display_mode
         self.position = position
-        self.style_config = STYLE_CONFIGS[style]
+        self.style_config = STYLE_CONFIGS[style].copy()
+        
+        # Apply custom colors if provided
+        if text_color:
+            ass_color = hex_to_ass_color(text_color)
+            if ass_color:
+                self.style_config["primary_color"] = ass_color
+        
+        if highlight_color:
+            ass_color = hex_to_ass_color(highlight_color)
+            if ass_color:
+                self.style_config["highlight_color"] = ass_color
+                # For multicolor, update the first color
+                if "colors" in self.style_config:
+                    self.style_config["colors"] = [ass_color] + self.style_config["colors"][1:]
+        
+        # Store original hex colors for use in ASS overrides
+        self.custom_highlight_hex = highlight_color
+        self.custom_text_hex = text_color
     
     def generate(
         self,
@@ -365,3 +412,39 @@ class SubtitleGenerator:
             text=text
         )
         subs.events.append(event)
+
+
+def generate_srt(segments: List[Segment], output_path: str):
+    """
+    Generate SRT subtitle file from segments.
+    This is a standalone function that creates a simple SRT file.
+    
+    Args:
+        segments: List of transcription segments
+        output_path: Path to save the .srt file
+    """
+    def format_timestamp(seconds: float) -> str:
+        """Convert seconds to SRT timestamp format (HH:MM:SS,mmm)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        milliseconds = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        subtitle_index = 1
+        
+        for segment in segments:
+            if not segment.text.strip():
+                continue
+            
+            start_time = format_timestamp(segment.start)
+            end_time = format_timestamp(segment.end)
+            
+            # Write SRT entry
+            f.write(f"{subtitle_index}\n")
+            f.write(f"{start_time} --> {end_time}\n")
+            f.write(f"{segment.text.strip()}\n")
+            f.write("\n")
+            
+            subtitle_index += 1

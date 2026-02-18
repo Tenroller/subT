@@ -2,8 +2,8 @@ import { useState, useCallback, useEffect } from 'react'
 import './App.css'
 
 // Use relative /api path in production (nginx proxies to backend)
-// Use localhost:8000 for local development
-const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000'
+// Use localhost:4569 for local development
+const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:4569'
 
 // Subtitle style options
 const STYLES = [
@@ -38,6 +38,22 @@ const POSITIONS = [
   { id: 'bottom', name: 'Bottom' }
 ]
 
+// Available languages for translation
+const LANGUAGES = [
+  { code: '', name: 'Original (No Translation)' },
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'it', name: 'Italian' },
+  { code: 'zh', name: 'Chinese' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'ar', name: 'Arabic' }
+]
+
 function App() {
   // State
   const [file, setFile] = useState(null)
@@ -51,6 +67,12 @@ function App() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState(null)
   const [isComplete, setIsComplete] = useState(false)
+
+  // Advanced tab state
+  const [activeTab, setActiveTab] = useState('basic')
+  const [textColor, setTextColor] = useState('#FFFFFF')
+  const [highlightColor, setHighlightColor] = useState('#FFD700')
+  const [targetLanguage, setTargetLanguage] = useState('')
 
   // File handling
   const handleFileSelect = useCallback((selectedFile) => {
@@ -126,6 +148,17 @@ function App() {
       formData.append('display_mode', displayMode)
       formData.append('position', position)
 
+      // Add advanced options if set
+      if (textColor && textColor !== '#FFFFFF') {
+        formData.append('text_color', textColor)
+      }
+      if (highlightColor && highlightColor !== '#FFD700') {
+        formData.append('highlight_color', highlightColor)
+      }
+      if (targetLanguage) {
+        formData.append('target_language', targetLanguage)
+      }
+
       const response = await fetch(`${API_URL}/upload`, {
         method: 'POST',
         body: formData
@@ -161,6 +194,7 @@ function App() {
           pending: 'Starting...',
           queued: 'Waiting in queue... (Server busy)',
           transcribing: 'Transcribing audio with AI...',
+          translating: 'Translating subtitles...',
           generating_subtitles: 'Generating stylized subtitles...',
           processing_video: 'Burning subtitles into video...',
           completed: 'Complete!',
@@ -185,10 +219,16 @@ function App() {
     return () => clearInterval(pollInterval)
   }, [jobId, isProcessing])
 
-  // Download handler
+  // Download handlers
   const handleDownload = () => {
     if (jobId) {
       window.open(`${API_URL}/download/${jobId}`, '_blank')
+    }
+  }
+
+  const handleDownloadSrt = () => {
+    if (jobId) {
+      window.open(`${API_URL}/download-srt/${jobId}`, '_blank')
     }
   }
 
@@ -200,13 +240,17 @@ function App() {
     setStatus('')
     setIsComplete(false)
     setError(null)
+    setActiveTab('basic')
+    setTextColor('#FFFFFF')
+    setHighlightColor('#FFD700')
+    setTargetLanguage('')
   }
 
   return (
     <div className="app">
       {/* Header */}
       <header className="header">
-        <h1 className="header__title">Subtitle Creator</h1>
+        <h1 className="header__title">SubT</h1>
         <p className="header__subtitle">
           Upload your video and let AI create stunning, stylized subtitles automatically
         </p>
@@ -227,9 +271,14 @@ function App() {
           <p className="download-section__subtitle">
             Subtitles have been burned into your video. Click below to download.
           </p>
-          <button className="download-button" onClick={handleDownload}>
-            ⬇️ Download Video
-          </button>
+          <div className="download-section__buttons">
+            <button className="download-button" onClick={handleDownload}>
+              ⬇️ Download Video
+            </button>
+            <button className="download-button download-button--srt" onClick={handleDownloadSrt}>
+              📄 Download SRT
+            </button>
+          </div>
           <button className="new-video-button" onClick={handleNewVideo}>
             Create another video
           </button>
@@ -364,6 +413,77 @@ function App() {
                 </div>
               </div>
             </div>
+          </section>
+
+          {/* Tab Navigation */}
+          <section className="tabs-section">
+            <div className="tabs">
+              <button
+                className={`tab ${activeTab === 'basic' ? 'tab--active' : ''}`}
+                onClick={() => setActiveTab('basic')}
+              >
+                Basic
+              </button>
+              <button
+                className={`tab ${activeTab === 'advanced' ? 'tab--active' : ''}`}
+                onClick={() => setActiveTab('advanced')}
+              >
+                ⚙️ Advanced
+              </button>
+            </div>
+
+            {/* Advanced Tab Content */}
+            {activeTab === 'advanced' && (
+              <div className="advanced-options">
+                <div className="advanced-options__grid">
+                  {/* Color Pickers */}
+                  <div className="option-group">
+                    <span className="option-group__label">Text Color</span>
+                    <div className="color-picker-wrapper">
+                      <input
+                        type="color"
+                        value={textColor}
+                        onChange={(e) => setTextColor(e.target.value)}
+                        className="color-picker"
+                      />
+                      <span className="color-value">{textColor}</span>
+                    </div>
+                  </div>
+
+                  <div className="option-group">
+                    <span className="option-group__label">Highlight Color</span>
+                    <div className="color-picker-wrapper">
+                      <input
+                        type="color"
+                        value={highlightColor}
+                        onChange={(e) => setHighlightColor(e.target.value)}
+                        className="color-picker"
+                      />
+                      <span className="color-value">{highlightColor}</span>
+                    </div>
+                  </div>
+
+                  {/* Language Translation */}
+                  <div className="option-group option-group--full">
+                    <span className="option-group__label">Translate Subtitles To</span>
+                    <select
+                      value={targetLanguage}
+                      onChange={(e) => setTargetLanguage(e.target.value)}
+                      className="language-select"
+                    >
+                      {LANGUAGES.map((lang) => (
+                        <option key={lang.code} value={lang.code}>
+                          {lang.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="option-hint">
+                      Translation packages are downloaded on first use. This may take a moment.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Submit Button */}

@@ -83,3 +83,57 @@ class Transcriber:
                 segments.append(segment)
         
         return segments
+    
+    def transcribe_with_language(
+        self, 
+        audio_path: str, 
+        language: Optional[str] = None
+    ) -> tuple[List[Segment], str]:
+        """
+        Transcribe audio/video file and return segments with detected language
+        
+        Args:
+            audio_path: Path to audio or video file
+            language: Optional language code (e.g., 'en', 'pt'). Auto-detected if None.
+            
+        Returns:
+            Tuple of (List of Segment objects, detected language code)
+        """
+        # Transcribe with word timestamps enabled
+        result = self.model.transcribe(
+            audio_path,
+            language=language,
+            word_timestamps=True,
+            verbose=False
+        )
+        
+        # Get detected language
+        detected_language = result.get("language", "en")
+        
+        segments = []
+        
+        for segment_data in result.get("segments", []):
+            words = []
+            
+            # Extract word-level timestamps
+            for word_data in segment_data.get("words", []):
+                word = Word(
+                    text=word_data.get("word", "").strip(),
+                    start=word_data.get("start", 0.0),
+                    end=word_data.get("end", 0.0)
+                )
+                if word.text:  # Only add non-empty words
+                    words.append(word)
+            
+            # Create segment
+            segment = Segment(
+                text=segment_data.get("text", "").strip(),
+                start=segment_data.get("start", 0.0),
+                end=segment_data.get("end", 0.0),
+                words=words
+            )
+            
+            if segment.text:  # Only add non-empty segments
+                segments.append(segment)
+        
+        return segments, detected_language
