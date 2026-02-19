@@ -512,7 +512,7 @@ async def process_video_task(
             generate_srt(segments, str(srt_path))
             job.srt_file = str(srt_path)
 
-            # Step 4: Generate styled ASS subtitles
+            # Step 4: Generate styled subtitles and burn into video
             job.status = JobStatus.GENERATING_SUBTITLES
 
             generator = SubtitleGenerator(
@@ -524,26 +524,48 @@ async def process_video_task(
             )
 
             width, height = video_processor.get_dimensions(input_path)
-            await asyncio.to_thread(
-                generator.generate,
-                segments,
-                str(subtitle_path),
-                width,
-                height
-            )
 
-            job.progress = 70
+            # For Yellow Highlight style, use drawtext filter for solid boxes
+            # For other styles, continue using ASS subtitles
+            if style == SubtitleStyle.YELLOW_HIGHLIGHT:
+                # Generate drawtext timeline
+                frames = generator.generate_drawtext_timeline(
+                    segments, width, height
+                )
 
-            # Step 5: Burn subtitles into video
-            job.status = JobStatus.PROCESSING_VIDEO
+                job.progress = 70
+                job.status = JobStatus.PROCESSING_VIDEO
 
-            await asyncio.to_thread(
-                video_processor.burn_subtitles,
-                input_path,
-                str(subtitle_path),
-                str(output_path),
-                fast_mode,
-            )
+                # Burn subtitles using drawtext filter
+                await asyncio.to_thread(
+                    video_processor.burn_subtitles_drawtext,
+                    input_path,
+                    frames,
+                    str(output_path),
+                    None,  # font_path
+                    fast_mode,
+                )
+            else:
+                # Generate ASS subtitles for other styles
+                await asyncio.to_thread(
+                    generator.generate,
+                    segments,
+                    str(subtitle_path),
+                    width,
+                    height
+                )
+
+                job.progress = 70
+                job.status = JobStatus.PROCESSING_VIDEO
+
+                # Burn ASS subtitles into video
+                await asyncio.to_thread(
+                    video_processor.burn_subtitles,
+                    input_path,
+                    str(subtitle_path),
+                    str(output_path),
+                    fast_mode,
+                )
 
             job.progress = 100
             job.status = JobStatus.COMPLETED

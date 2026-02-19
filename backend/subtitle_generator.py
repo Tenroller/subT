@@ -10,6 +10,28 @@ from dataclasses import dataclass
 from transcriber import Segment, Word
 
 
+@dataclass
+class DrawtextWord:
+    """Word data for FFmpeg drawtext filter"""
+    text: str
+    start: float
+    end: float
+    is_highlighted: bool
+    x_position: int  # Pixel position from left
+    y_position: int  # Pixel position from top
+    font_size: int
+    text_color: str  # Hex color like #FFFFFF
+    box_color: str  # Hex color for background box (only if highlighted)
+
+
+@dataclass
+class DrawtextFrame:
+    """A single frame/moment containing all visible words"""
+    start: float
+    end: float
+    words: list  # List of DrawtextWord
+
+
 class SubtitleStyle(str, Enum):
     YELLOW_HIGHLIGHT = "yellow_highlight"
     MULTICOLOR_POP = "multicolor_pop"
@@ -442,6 +464,200 @@ class SubtitleGenerator:
                 text=text
             )
             subs.events.append(event)
+
+    def generate_drawtext_timeline(
+        self,
+        segments: List[Segment],
+        video_width: int = 1920,
+        video_height: int = 1080
+    ) -> List[DrawtextFrame]:
+        """
+        Generate timeline of words for FFmpeg drawtext filter.
+        Used for Yellow Highlight style to get solid background boxes.
+
+        Args:
+            segments: List of transcription segments with words
+            video_width: Video width for positioning
+            video_height: Video height for positioning
+
+        Returns:
+            List of DrawtextFrame objects with word positions and timing
+        """
+        frames = []
+        font_size = self.style_config["fontsize"]
+
+        # Get custom colors or defaults
+        # For highlighted word: black text on yellow/custom box
+        # For non-highlighted: white text with shadow (no box)
+        highlight_box_color = self.custom_highlight_hex or "#FFD700"  # Yellow default
+        highlight_text_color = "#000000"  # Black text on highlight
+        normal_text_color = self.custom_text_hex or "#FFFFFF"  # White text normally
+
+        # Calculate Y position based on subtitle position
+        if self.position == Position.TOP:
+            y_pos = int(video_height * 0.08)
+        elif self.position == Position.CENTER:
+            y_pos = int(video_height * 0.5 - font_size / 2)
+        else:  # BOTTOM
+            y_pos = int(video_height * 0.85)
+
+        if self.display_mode == DisplayMode.SENTENCE:
+            frames = self._generate_sentence_drawtext(
+                segments, video_width, video_height, y_pos, font_size,
+                highlight_box_color, highlight_text_color, normal_text_color
+            )
+        else:
+            frames = self._generate_word_mode_drawtext(
+                segments, video_width, video_height, y_pos, font_size,
+                highlight_box_color, highlight_text_color, normal_text_color
+            )
+
+        return frames
+
+    def _estimate_text_width(self, text: str, font_size: int) -> int:
+        """
+        Estimate text width in pixels.
+        Impact font is roughly 0.6x the font size per character for uppercase.
+        """
+        # Impact font average character width ratio (uppercase)
+        char_width_ratio = 0.55
+        return int(len(text) * font_size * char_width_ratio)
+
+    def _generate_sentence_drawtext(
+        self,
+        segments: List[Segment],
+        video_width: int,
+        video_height: int,
+        y_pos: int,
+        font_size: int,
+        highlight_box_color: str,
+        highlight_text_color: str,
+        normal_text_color: str
+    ) -> List[DrawtextFrame]:
+        """Generate drawtext frames for sentence mode"""
+        frames = []
+        space_width = int(font_size * 0.3)  # Space between words
+
+        for segment in segments:
+            if not segment.words:
+                continue
+
+            # Calculate total width of sentence for centering
+            words_upper = [w.text.upper() for w in segment.words]
+            word_widths = [self._estimate_text_width(w, font_size) for w in words_upper]
+            total_width = sum(word_widths) + space_width * (len(words_upper) - 1)
+            start_x = (video_width - total_width) // 2
+
+            # For each word that gets highlighted
+            for i, current_word in enumerate(segment.words):
+                # Calculate x positions for all words
+                x_positions = []
+                current_x = start_x
+                for j, width in enumerate(word_widths):
+                    x_positions.append(current_x)
+                    current_x += width + space_width
+
+                # Create DrawtextWord objects for all words in this frame
+                frame_words = []
+                for j, word in enumerate(segment.words):
+                    is_highlighted = (j == i)
+                    frame_words.append(DrawtextWord(
+                        text=words_upper[j],
+                        start=current_word.start,
+                        end=segment.words[i + 1].start if i < len(segment.words) - 1 else segment.end,
+                        is_highlighted=is_highlighted,
+                        x_position=x_positions[j],
+                        y_position=y_pos,
+                        font_size=font_size,
+                        text_color=highlight_text_color if is_highlighted else normal_text_color,
+                        box_color=highlight_box_color if is_highlighted else ""
+                    ))
+
+                # Determine end time
+                end_time = segment.words[i + 1].start if i < len(segment.words) - 1 else segment.end
+
+                frames.append(DrawtextFrame(
+                    start=current_word.start,
+                    end=end_time,
+                    words=frame_words
+                ))
+
+        return frames
+
+    def _generate_word_mode_drawtext(
+        self,
+        segments: List[Segment],
+        video_width: int,
+        video_height: int,
+        y_pos: int,
+        font_size: int,
+        highlight_box_color: str,
+        highlight_text_color: str,
+        normal_text_color: str
+    ) -> List[DrawtextFrame]:
+        """Generate drawtext frames for word-by-word mode"""
+        frames = []
+        words_per_group = 2
+        space_width = int(font_size * 0.3)
+
+        for segment in segments:
+            if not segment.words:
+                continue
+
+            # Group words
+            for i in range(0, len(segment.words), words_per_group):
+                group = segment.words[i:i + words_per_group]
+                if not group:
+                    continue
+
+                group_start = group[0].start
+                group_end = group[-1].end
+
+                # Adjust end time to next word's start if available
+                if i + words_per_group < len(segment.words):
+                    group_end = segment.words[i + words_per_group].start
+
+                # Calculate positioning for this group
+                words_upper = [w.text.upper() for w in group]
+                word_widths = [self._estimate_text_width(w, font_size) for w in words_upper]
+                total_width = sum(word_widths) + space_width * (len(words_upper) - 1)
+                start_x = (video_width - total_width) // 2
+
+                # For each word that gets highlighted in the group
+                for hi, highlighted_word in enumerate(group):
+                    # Calculate x positions
+                    x_positions = []
+                    current_x = start_x
+                    for w, width in enumerate(word_widths):
+                        x_positions.append(current_x)
+                        current_x += width + space_width
+
+                    # Create frame words
+                    frame_words = []
+                    for j, word in enumerate(group):
+                        is_highlighted = (j == hi)
+                        frame_words.append(DrawtextWord(
+                            text=words_upper[j],
+                            start=highlighted_word.start,
+                            end=group[hi + 1].start if hi < len(group) - 1 else group_end,
+                            is_highlighted=is_highlighted,
+                            x_position=x_positions[j],
+                            y_position=y_pos,
+                            font_size=font_size,
+                            text_color=highlight_text_color if is_highlighted else normal_text_color,
+                            box_color=highlight_box_color if is_highlighted else ""
+                        ))
+
+                    # Determine end time for this frame
+                    end_time = group[hi + 1].start if hi < len(group) - 1 else group_end
+
+                    frames.append(DrawtextFrame(
+                        start=highlighted_word.start,
+                        end=end_time,
+                        words=frame_words
+                    ))
+
+        return frames
 
 
 def generate_srt(segments: List[Segment], output_path: str):

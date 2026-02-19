@@ -893,6 +893,14 @@ body {
   background-clip: text;
 }
 
+.progress-section__hint {
+  margin-top: var(--space-lg);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.8;
+}
+
 /* ===== Download ===== */
 .download-section {
   text-align: center;

@@ -467,6 +467,7 @@ function Home() {
             <div className="progress-bar__fill" style={{ width: `${progress}%` }} />
           </div>
           <div className="progress-section__percentage">{progress}%</div>
+          <p className="progress-section__hint">Go grab a coffee ☕, this may take some time...</p>
         </section>
       ) : (
         /* ── Two-column layout ── */
