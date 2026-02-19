@@ -30,3 +30,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = []
+
+# Use PyTorch's CPU-only index so we don't pull down multi-GB CUDA libraries
+# (nvidia-cudnn, nvidia-cublas, triton, etc.) in the Docker build.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
