@@ -274,23 +274,62 @@ const LivePreview = memo(function LivePreview({ style, displayMode, position, te
   )
 })
 
+// ─── Session Storage Helpers ──────────────────────────────────────────────────
+const JOB_STATE_KEY = 'subt_job_state'
+
+function loadJobState() {
+  try {
+    const stored = sessionStorage.getItem(JOB_STATE_KEY)
+    if (stored) return JSON.parse(stored)
+  } catch (e) {
+    console.error('Failed to load job state:', e)
+  }
+  return null
+}
+
+function saveJobState(state) {
+  try {
+    sessionStorage.setItem(JOB_STATE_KEY, JSON.stringify(state))
+  } catch (e) {
+    console.error('Failed to save job state:', e)
+  }
+}
+
+function clearJobState() {
+  try {
+    sessionStorage.removeItem(JOB_STATE_KEY)
+  } catch (e) {
+    console.error('Failed to clear job state:', e)
+  }
+}
+
 // ─── Home Page ─────────────────────────────────────────────────────────────────
 function Home() {
+  // Restore job state from session storage on mount
+  const savedState = loadJobState()
+
   const [file, setFile] = useState(null)
   const [style, setStyle] = useState('yellow_highlight')
   const [displayMode, setDisplayMode] = useState('word')
   const [position, setPosition] = useState('bottom')
   const [isDragging, setIsDragging] = useState(false)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [jobId, setJobId] = useState(null)
-  const [progress, setProgress] = useState(0)
-  const [status, setStatus] = useState('')
+  const [isProcessing, setIsProcessing] = useState(savedState?.isProcessing ?? false)
+  const [jobId, setJobId] = useState(savedState?.jobId ?? null)
+  const [progress, setProgress] = useState(savedState?.progress ?? 0)
+  const [status, setStatus] = useState(savedState?.status ?? '')
   const [error, setError] = useState(null)
-  const [isComplete, setIsComplete] = useState(false)
+  const [isComplete, setIsComplete] = useState(savedState?.isComplete ?? false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [textColor, setTextColor] = useState('#FFFFFF')
   const [highlightColor, setHighlightColor] = useState('#FFD700')
   const [targetLanguage, setTargetLanguage] = useState('')
+
+  // Persist job state to session storage whenever it changes
+  useEffect(() => {
+    if (jobId) {
+      saveJobState({ jobId, progress, status, isProcessing, isComplete })
+    }
+  }, [jobId, progress, status, isProcessing, isComplete])
 
   const handleFileSelect = useCallback((selectedFile) => {
     setError(null)
@@ -396,6 +435,7 @@ function Home() {
           setIsProcessing(false)
           return
         } else if (data.status === 'failed') {
+          clearJobState()
           setError(data.error || 'Processing failed')
           setIsProcessing(false)
           return
@@ -418,6 +458,7 @@ function Home() {
           const backoffDelay = Math.min(1000 * Math.pow(2, retryCount), 30000)
           pollTimeout = setTimeout(pollStatus, backoffDelay)
         } else {
+          clearJobState()
           setError('Failed to check status after multiple retries')
           setIsProcessing(false)
         }
@@ -437,6 +478,7 @@ function Home() {
   const handleDownloadSrt = () => jobId && window.open(`${API_URL}/download-srt/${jobId}`, '_blank')
 
   const handleNewVideo = () => {
+    clearJobState()
     setFile(null); setJobId(null); setProgress(0); setStatus('')
     setIsComplete(false); setError(null); setShowAdvanced(false)
     setTextColor('#FFFFFF'); setHighlightColor('#FFD700'); setTargetLanguage('')
