@@ -79,7 +79,7 @@ class VideoProcessor:
             output_path: Path for output video
             copy_codec: If True, use codec copy for ~50-100x speedup.
                        Results in larger files with potential compatibility issues.
-                       If False, re-encode with optimized settings.
+                       If False, re-encode with optimized CPU settings.
         """
         if copy_codec:
             # Fast mode: Copy codec without re-encoding (50-100x faster)
@@ -95,38 +95,18 @@ class VideoProcessor:
                 output_path
             ]
         else:
-            # Quality mode: Re-encode with optimized settings
-            # First, try to detect hardware acceleration
-            hwaccel = self._detect_hwaccel()
-
-            if hwaccel:
-                # Hardware acceleration available (NVIDIA GPU)
-                cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-hwaccel", "cuda",
-                    "-hwaccel_output_format", "cuda",
-                    "-i", video_path,
-                    "-vf", f"ass={subtitle_path}",
-                    "-c:a", "copy",
-                    "-c:v", hwaccel,
-                    "-preset", "fast",
-                    "-b:v", "5M",  # Target bitrate for hardware encoder
-                    output_path
-                ]
-            else:
-                # Software encoding with optimized settings
-                cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-i", video_path,
-                    "-vf", f"ass={subtitle_path}",
-                    "-c:a", "copy",
-                    "-c:v", "libx264",
-                    "-preset", "veryfast",  # Faster than "fast" (30% speedup)
-                    "-crf", "26",  # Slightly lower quality for speed (was 23)
-                    output_path
-                ]
+            # Quality mode: Software re-encode with optimized settings
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i", video_path,
+                "-vf", f"ass={subtitle_path}",
+                "-c:a", "copy",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "26",
+                output_path
+            ]
 
         try:
             subprocess.run(
@@ -137,33 +117,6 @@ class VideoProcessor:
             )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"FFmpeg failed: {e.stderr}")
-
-    def _detect_hwaccel(self) -> str:
-        """
-        Detect available hardware acceleration
-
-        Returns:
-            Hardware encoder name (e.g., 'h264_nvenc') or empty string if none available
-        """
-        # Check for NVIDIA GPU support
-        try:
-            result = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-encoders"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-
-            # Check for NVIDIA hardware encoders
-            if "h264_nvenc" in result.stdout:
-                return "h264_nvenc"
-            elif "hevc_nvenc" in result.stdout:
-                return "hevc_nvenc"
-
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-
-        return ""
     
     def extract_audio(self, video_path: str, audio_path: str):
         """
