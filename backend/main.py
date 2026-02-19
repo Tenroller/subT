@@ -372,18 +372,13 @@ async def upload_video(
             detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB.",
         )
 
-    # ── 4. Read file content (chunked to avoid memory spike) ────────────────
-    chunks = []
-    async for chunk in video:
-        chunks.append(chunk)
-        if sum(len(c) for c in chunks) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB.",
-            )
-
-    # Efficient O(n) concatenation
-    content = b"".join(chunks)
+    # ── 4. Read file content ─────────────────────────────────────────────────
+    content = await video.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB.",
+        )
 
     # ── 5. MIME type validation (magic bytes) ───────────────────────────────
     if not _validate_mp4_magic(content):
