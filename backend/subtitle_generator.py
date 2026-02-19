@@ -57,10 +57,11 @@ STYLE_CONFIGS = {
         "outline": 4,
         "shadow": 0,
         "colors": [
-            "&H00FFFFFF",  # White
-            "&H0000FF00",  # Green (BGR)
-            "&H0000FFFF",  # Yellow (BGR)
-            "&H00FF00FF",  # Magenta
+            "&H00FFFFFF",  # White (#FFFFFF)
+            "&H0000FFCC",  # Lime (#CCFF00)
+            "&H00FFFF00",  # Cyan (#00FFFF)
+            "&H006B6BFF",  # Coral (#FF6B6B)
+            "&H0000D7FF",  # Gold (#FFD700)
         ]
     },
     SubtitleStyle.CLEAN_OUTLINE: {
@@ -269,28 +270,27 @@ class SubtitleGenerator:
         # Yellow box effect using xbord/ybord for rectangular padding
         # \3c = outline/border color (yellow), \1c = text color (black)
         # \xbord/\ybord = horizontal/vertical border size for box effect
-        # &H00D7FF = Yellow in BGR (matches frontend preview)
-        highlight_start = "{\\1c&H000000&\\3c&H00D7FF&\\xbord10\\ybord5\\shad0}"
+        # Use custom highlight color if available
+        highlight_color = self.style_config.get("highlight_color", "&H00D7FF")
+        highlight_start = f"{{\\1c&H000000&\\3c{highlight_color}&\\xbord10\\ybord5\\shad0}}"
         highlight_end = "{\\r}"  # Reset to default style
-        
+
+        # Pre-compute uppercased words for efficiency
+        words_upper = [word.text.upper() for word in segment.words]
+
         for i, current_word in enumerate(segment.words):
             # Build the sentence with current word highlighted
-            parts = []
-            for j, word in enumerate(segment.words):
-                if j == i:
-                    # Highlight current word with yellow box
-                    parts.append(f"{highlight_start}{word.text.upper()}{highlight_end}")
-                else:
-                    parts.append(word.text.upper())
-            
+            # Optimized: Use list comprehension and pre-computed uppercase
+            parts = [
+                f"{highlight_start}{words_upper[j]}{highlight_end}" if j == i else words_upper[j]
+                for j in range(len(segment.words))
+            ]
+
             text = " ".join(parts)
-            
+
             # Determine end time (next word start or segment end)
-            if i < len(segment.words) - 1:
-                end_time = segment.words[i + 1].start
-            else:
-                end_time = segment.end
-            
+            end_time = segment.words[i + 1].start if i < len(segment.words) - 1 else segment.end
+
             event = pysubs2.SSAEvent(
                 start=int(current_word.start * 1000),
                 end=int(end_time * 1000),
@@ -345,14 +345,8 @@ class SubtitleGenerator:
                 elif self.style == SubtitleStyle.MULTICOLOR_POP:
                     self._generate_word_group_multicolor(subs, group, start_time, end_time)
                 else:
-                    # Clean outline
-                    text = " ".join(w.text.upper() for w in group)
-                    event = pysubs2.SSAEvent(
-                        start=int(start_time * 1000),
-                        end=int(end_time * 1000),
-                        text=text
-                    )
-                    subs.events.append(event)
+                    # Clean outline — highlight active word in gold
+                    self._generate_word_group_clean_highlight(subs, group, start_time, end_time)
     
     def _generate_word_group_with_highlight(
         self,
@@ -363,25 +357,26 @@ class SubtitleGenerator:
     ):
         """Generate word group with highlighted current word (yellow box)"""
         # Yellow box effect using xbord/ybord for rectangular padding
-        highlight_start = "{\\1c&H000000&\\3c&H00D7FF&\\xbord10\\ybord5\\shad0}"
+        # Use custom highlight color if available
+        highlight_color = self.style_config.get("highlight_color", "&H00D7FF")
+        highlight_start = f"{{\\1c&H000000&\\3c{highlight_color}&\\xbord10\\ybord5\\shad0}}"
         highlight_end = "{\\r}"  # Reset to default style
-        
+
+        # Pre-compute uppercased words for efficiency
+        words_upper = [word.text.upper() for word in group]
+
         for i, current_word in enumerate(group):
-            parts = []
-            for j, word in enumerate(group):
-                if j == i:
-                    parts.append(f"{highlight_start}{word.text.upper()}{highlight_end}")
-                else:
-                    parts.append(word.text.upper())
-            
+            # Optimized: Use list comprehension and pre-computed uppercase
+            parts = [
+                f"{highlight_start}{words_upper[j]}{highlight_end}" if j == i else words_upper[j]
+                for j in range(len(group))
+            ]
+
             text = " ".join(parts)
-            
+
             # End time is next word start or group end
-            if i < len(group) - 1:
-                end_time = group[i + 1].start
-            else:
-                end_time = group_end
-            
+            end_time = group[i + 1].start if i < len(group) - 1 else group_end
+
             event = pysubs2.SSAEvent(
                 start=int(current_word.start * 1000),
                 end=int(end_time * 1000),
@@ -412,6 +407,41 @@ class SubtitleGenerator:
             text=text
         )
         subs.events.append(event)
+
+    def _generate_word_group_clean_highlight(
+        self,
+        subs: pysubs2.SSAFile,
+        group: List[Word],
+        group_start: float,
+        group_end: float
+    ):
+        """Generate word group with gold-highlighted active word (clean outline style)"""
+        # Use custom highlight color if available, default to gold
+        highlight_color = self.style_config.get("highlight_color", "&H0000D7FF")
+        highlight_start = f"{{\\c{highlight_color}&}}"
+        highlight_end = "{\\r}"  # Reset to default style
+
+        # Pre-compute uppercased words for efficiency
+        words_upper = [word.text.upper() for word in group]
+
+        for i, current_word in enumerate(group):
+            # Optimized: Use list comprehension and pre-computed uppercase
+            parts = [
+                f"{highlight_start}{words_upper[j]}{highlight_end}" if j == i else words_upper[j]
+                for j in range(len(group))
+            ]
+
+            text = " ".join(parts)
+
+            # End time is next word start or group end
+            end_time = group[i + 1].start if i < len(group) - 1 else group_end
+
+            event = pysubs2.SSAEvent(
+                start=int(current_word.start * 1000),
+                end=int(end_time * 1000),
+                text=text
+            )
+            subs.events.append(event)
 
 
 def generate_srt(segments: List[Segment], output_path: str):

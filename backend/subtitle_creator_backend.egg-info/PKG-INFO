@@ -13,3 +13,5 @@ Requires-Dist: torchaudio>=2.0.0
 Requires-Dist: openai-whisper>=20231117
 Requires-Dist: argostranslate>=1.9.0
 Requires-Dist: Pillow>=10.2.0
+Requires-Dist: slowapi>=0.1.9
+Requires-Dist: cachetools>=5.3.0
