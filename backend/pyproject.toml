@@ -9,9 +9,7 @@ dependencies = [
     "python-multipart>=0.0.6",
     "pysubs2>=1.6.1",
     "ffmpeg-python>=0.2.0",
-    "torch>=2.0.0",
-    "torchaudio>=2.0.0",
-    "openai-whisper>=20231117",
+    "faster-whisper>=1.1.0",
     "argostranslate>=1.9.0",
     "Pillow>=10.2.0",
     "slowapi>=0.1.9",
@@ -31,13 +29,3 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 py-modules = []
 
-# Use PyTorch's CPU-only index so we don't pull down multi-GB CUDA libraries
-# (nvidia-cudnn, nvidia-cublas, triton, etc.) in the Docker build.
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchaudio = { index = "pytorch-cpu" }

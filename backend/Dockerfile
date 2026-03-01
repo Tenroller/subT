@@ -46,6 +46,14 @@ RUN mkdir -p uploads outputs
 # Add venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
+# ── faster-whisper tuning (override at runtime or in docker-compose) ──────────
+# WHISPER_DEVICE:   cpu | cuda          (default: cpu)
+# WHISPER_COMPUTE:  int8 | float16      (default: int8 for cpu, float16 for cuda)
+# WHISPER_THREADS:  CPU inter-op threads (default: 4)
+ENV WHISPER_DEVICE="cpu" \
+    WHISPER_COMPUTE="int8" \
+    WHISPER_THREADS="4"
+
 # Expose the backend port
 EXPOSE 4569
 

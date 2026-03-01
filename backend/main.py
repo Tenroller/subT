@@ -3,11 +3,13 @@ Video Subtitle Creation App - Backend
 FastAPI application for video transcription and subtitle generation
 """
 import os
+import gc
 import time
 import re
 import uuid
 import asyncio
 import hashlib
+import threading
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -92,8 +94,66 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+# ---------------------------------------------------------------------------
+# Lazy Whisper model manager
+# ---------------------------------------------------------------------------
+MODEL_NAME = "turbo"
+MODEL_IDLE_TIMEOUT = 600  # seconds — unload after 10 minutes of inactivity
+
+
+class WhisperModelManager:
+    """
+    Loads the Whisper model on first use and automatically unloads it
+    after MODEL_IDLE_TIMEOUT seconds of inactivity.
+    """
+
+    def __init__(self, model_name: str = MODEL_NAME):
+        self._model_name = model_name
+        self._transcriber: Optional[Transcriber] = None
+        self._last_used: float = 0.0
+        self._lock = threading.Lock()  # protects load/unload
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._transcriber is not None
+
+    def get(self) -> Transcriber:
+        """Return the Transcriber, loading the model if necessary."""
+        with self._lock:
+            if self._transcriber is None:
+                print(f"[Whisper] Loading model '{self._model_name}'…")
+                self._transcriber = Transcriber(model_name=self._model_name)
+                print("[Whisper] Model loaded and ready.")
+            self._last_used = time.time()
+            return self._transcriber
+
+    def maybe_unload(self) -> bool:
+        """
+        Unload the model if it has been idle for longer than MODEL_IDLE_TIMEOUT.
+        Returns True if the model was unloaded.
+        """
+        with self._lock:
+            if self._transcriber is None:
+                return False
+            if time.time() - self._last_used >= MODEL_IDLE_TIMEOUT:
+                print("[Whisper] Idle timeout reached — unloading model from RAM.")
+                self._transcriber = None
+                gc.collect()
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        print("[Whisper] CUDA cache cleared.")
+                except ImportError:
+                    pass
+                return True
+        return False
+
+
+# Singleton model manager — no model is loaded at startup
+model_manager = WhisperModelManager(model_name=MODEL_NAME)
+
 # Initialize services
-transcriber: Optional[Transcriber] = None
 video_processor = VideoProcessor()
 
 # Concurrency control — limit to 3 concurrent processing jobs globally
@@ -227,12 +287,10 @@ def _count_active_jobs(ip: str) -> int:
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
-    """Load Whisper model and start cleanup loop"""
-    global transcriber
-    print("Loading Whisper turbo model... This may take a moment on first run.")
-    transcriber = Transcriber(model_name="turbo")
-    print("Whisper model loaded successfully!")
-    asyncio.create_task(periodic_cleanup())
+    """Start background cleanup loop (model is loaded lazily on first use)"""
+    print("[Startup] Backend ready. Whisper model will be loaded on first transcription request.")
+    task = asyncio.create_task(periodic_cleanup())
+    await task
 
 
 # ---------------------------------------------------------------------------
@@ -256,54 +314,59 @@ async def cleanup_file_after_delay(path: str, delay: int = 300):
 
 
 async def periodic_cleanup():
-    """Periodically clean up stale files (older than 1 hour) and expired jobs"""
+    """Periodically clean up stale files, expired jobs, and idle Whisper model."""
     while True:
         try:
-            await asyncio.sleep(600)
+            await asyncio.sleep(60)  # check every minute
 
             now = time.time()
             max_age = 3600  # 1 hour
 
-            # Clean up stale files
-            for p in OUTPUT_DIR.glob("*"):
-                if p.is_file() and now - p.stat().st_mtime > max_age:
-                    try:
-                        p.unlink()
-                        print(f"Auto-cleaned stale file: {p}")
-                    except Exception as e:
-                        print(f"Error deleting {p}: {e}")
+            # ── Unload Whisper model if idle ─────────────────────────────────
+            await asyncio.to_thread(model_manager.maybe_unload)
 
-            for p in UPLOAD_DIR.glob("*"):
-                if p.is_file() and now - p.stat().st_mtime > max_age:
-                    try:
-                        p.unlink()
-                    except Exception as e:
-                        print(f"Error deleting {p}: {e}")
+            # ── Clean up stale files every 10 minutes ────────────────────────
+            # (we still run every minute for the model check, but only do
+            #  heavy file-system work every 10th iteration)
+            if int(now) % 600 < 60:
+                for p in OUTPUT_DIR.glob("*"):
+                    if p.is_file() and now - p.stat().st_mtime > max_age:
+                        try:
+                            p.unlink()
+                            print(f"Auto-cleaned stale file: {p}")
+                        except Exception as e:
+                            print(f"Error deleting {p}: {e}")
 
-            # Clean up expired jobs (TTL-based)
-            expired_jobs = [
-                job_id for job_id, job in jobs.items()
-                if job.created_at > 0 and now - job.created_at > JOB_TTL_SECONDS
-            ]
-            for job_id in expired_jobs:
-                job = jobs.pop(job_id, None)
-                if job and job.client_ip:
-                    _unregister_active_job(job.client_ip, job_id)
-                print(f"Cleaned up expired job: {job_id}")
+                for p in UPLOAD_DIR.glob("*"):
+                    if p.is_file() and now - p.stat().st_mtime > max_age:
+                        try:
+                            p.unlink()
+                        except Exception as e:
+                            print(f"Error deleting {p}: {e}")
 
-            # Enforce maximum job history (circular buffer)
-            if len(jobs) > MAX_JOB_HISTORY:
-                # Sort by creation time and remove oldest
-                sorted_jobs = sorted(
-                    jobs.items(),
-                    key=lambda item: item[1].created_at
-                )
-                to_remove = len(jobs) - MAX_JOB_HISTORY
-                for job_id, job in sorted_jobs[:to_remove]:
-                    jobs.pop(job_id, None)
-                    if job.client_ip:
+                # Clean up expired jobs (TTL-based)
+                expired_jobs = [
+                    job_id for job_id, job in jobs.items()
+                    if job.created_at > 0 and now - job.created_at > JOB_TTL_SECONDS
+                ]
+                for job_id in expired_jobs:
+                    job = jobs.pop(job_id, None)
+                    if job and job.client_ip:
                         _unregister_active_job(job.client_ip, job_id)
-                    print(f"Removed old job from history: {job_id}")
+                    print(f"Cleaned up expired job: {job_id}")
+
+                # Enforce maximum job history (circular buffer)
+                if len(jobs) > MAX_JOB_HISTORY:
+                    sorted_jobs = sorted(
+                        jobs.items(),
+                        key=lambda item: item[1].created_at
+                    )
+                    to_remove = len(jobs) - MAX_JOB_HISTORY
+                    for job_id, job in sorted_jobs[:to_remove]:
+                        jobs.pop(job_id, None)
+                        if job.client_ip:
+                            _unregister_active_job(job.client_ip, job_id)
+                        print(f"Removed old job from history: {job_id}")
 
         except Exception as e:
             print(f"Cleanup loop error: {e}")
@@ -315,7 +378,7 @@ async def periodic_cleanup():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "model_loaded": transcriber is not None}
+    return {"status": "healthy", "model_loaded": model_manager.is_loaded}
 
 
 @app.post("/upload")
@@ -480,6 +543,8 @@ async def process_video_task(
             else:
                 # Transcribe with concurrency control (allow 2 concurrent)
                 async with transcription_semaphore:
+                    # model_manager.get() loads the model if not already in RAM
+                    transcriber = model_manager.get()
                     segments, detected_language = await asyncio.to_thread(
                         transcriber.transcribe_with_language,
                         input_path,
